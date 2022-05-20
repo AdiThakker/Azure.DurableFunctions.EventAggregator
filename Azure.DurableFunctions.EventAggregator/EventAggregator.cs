@@ -29,14 +29,14 @@ namespace Azure.DurableFunctions.EventAggregator
         public async Task ReceiveEventAsync([EventGridTrigger] EventGridEvent eventGridEvent, [DurableClient] IDurableClient client)
         {
             Logger.LogInformation($"Received Event: {eventGridEvent.Data.ToString()}");
-            await this.ReceiveEventAsync(eventGridEvent, client);
+            await this.ReceiveOrUpdateEventsAsync(eventGridEvent, client);
         }
 
         [FunctionName("Dependencies-Subscriber")]
         public async Task DependenciesSubscriber([EventGridTrigger] EventGridEvent eventGridEvent, [DurableClient] IDurableClient client)
         {
             Logger.LogInformation($"Received Dependency: {eventGridEvent.Data.ToString()}");
-            await this.ReceiveEventAsync(eventGridEvent, client);
+            await this.ReceiveOrUpdateEventsAsync(eventGridEvent, client);
         }
 
         [FunctionName("Event-Aggregator-Orchestrator")]
@@ -58,12 +58,13 @@ namespace Azure.DurableFunctions.EventAggregator
                     if (completed == remainingDepdencies) // all dependencies received
                     {
                         cts.Cancel();
-                        await context.CallActivityAsync(@"Publish-Event-Status", receivedEvent);
+                        await context.CallActivityAsync(@"Publish-Event-Status", $"Ready to process {receivedEvent.Subject} : dependencies remaining {completed.Result.Count}");
                     }
                     else
                     {
-                        // Timed out
-                        
+                        // Timed out 
+                        //signal to end await context.RaiseEventAsync(orchestration.InstanceId, @"Event-Aggregator-Orchestrator", eventGridEvent);
+                        await context.CallActivityAsync(@"Publish-Event-Status", $"Ready to process {receivedEvent.Subject} : dependencies remaining {completed.Result.Count}");
                     }                  
                                       
                 }
@@ -75,7 +76,7 @@ namespace Azure.DurableFunctions.EventAggregator
         }
 
         [FunctionName("Publish-Event-Status")]
-        public async Task PublishStatus([ActivityTrigger] string status)
+        public async Task PublishStatusAsync([ActivityTrigger] string status)
         {
             Logger.LogInformation($"Publishing Status for Event: {status}");
             await Task.CompletedTask;
@@ -87,12 +88,18 @@ namespace Azure.DurableFunctions.EventAggregator
             {
                 // wait for dependencies to arrive
                 var dependency = await context.WaitForExternalEvent<EventGridEvent>(@"Event-Aggregator-Orchestrator");
-                dependencies.Remove(dependency.EventType);
+                if (dependency != null)
+                {
+                    if (dependency.Subject.Equals("Exit"))
+                        return dependencies;
+                    
+                    dependencies.Remove(dependency.EventType);
+                }
             }
             return dependencies;
         }
 
-        private async Task ReceiveEvents(EventGridEvent eventGridEvent, IDurableClient client)
+        private async Task ReceiveOrUpdateEventsAsync(EventGridEvent eventGridEvent, IDurableClient client)
         {
             // Get orchestration Status
             var orchestration = await client.GetStatusAsync(eventGridEvent.Subject); // Subject is Unique for Testing
