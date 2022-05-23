@@ -7,36 +7,36 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 
-namespace Azure.DurableFunctions.EventAggregator
+namespace Azure.DurableFunctions.EventAggregator.DurableFunction
 {
-    public class EventAggregator
+    public class EventAggregatorOrchestrator
     {
         private static ConcurrentDictionary<string, List<string>> dependencies;
 
-        static EventAggregator()
+        static EventAggregatorOrchestrator()
         {
             dependencies = new ConcurrentDictionary<string, List<string>>();
             dependencies.TryAdd("Event A", new List<string>() { "A-1", "A-2" });
             dependencies.TryAdd("Event B", new List<string>() { "B-1" });
-            dependencies.TryAdd("Event C", new List<string>() { "" });            
+            dependencies.TryAdd("Event C", new List<string>() { "" });
         }
 
-        public ILogger<EventAggregator> Logger { get; }
+        public ILogger<EventAggregatorOrchestrator> Logger { get; }
 
-        public EventAggregator(ILogger<EventAggregator> logger) => Logger = logger;
+        public EventAggregatorOrchestrator(ILogger<EventAggregatorOrchestrator> logger) => Logger = logger;
 
         [FunctionName("Event-Subscriber")]
         public async Task ReceiveEventAsync([EventGridTrigger] EventGridEvent eventGridEvent, [DurableClient] IDurableClient client)
         {
             Logger.LogInformation($"Received Event: {eventGridEvent.Data.ToString()}");
-            await this.ReceiveOrUpdateEventsAsync(eventGridEvent, client);
+            await ReceiveOrUpdateEventsAsync(eventGridEvent, client);
         }
 
         [FunctionName("Dependencies-Subscriber")]
         public async Task DependenciesSubscriber([EventGridTrigger] EventGridEvent eventGridEvent, [DurableClient] IDurableClient client)
         {
             Logger.LogInformation($"Received Dependency: {eventGridEvent.Data.ToString()}");
-            await this.ReceiveOrUpdateEventsAsync(eventGridEvent, client);
+            await ReceiveOrUpdateEventsAsync(eventGridEvent, client);
         }
 
         [FunctionName("Event-Aggregator-Orchestrator")]
@@ -51,10 +51,10 @@ namespace Azure.DurableFunctions.EventAggregator
                 if (dependenciesList.Any())
                 {
                     var endTime = context.CurrentUtcDateTime.Add(TimeSpan.FromSeconds(120));// Durable Timer 
-                    using var  cts = new CancellationTokenSource();
+                    using var cts = new CancellationTokenSource();
                     var timeout = context.CreateTimer<List<string>>(endTime, default, cts.Token);
-                    var remainingDepdencies = this.DependenciesReceivedAsync(context, dependenciesList, cts);
-                    var completed = await Task.WhenAny<List<string>>(timeout, remainingDepdencies);
+                    var remainingDepdencies = DependenciesReceivedAsync(context, dependenciesList, cts);
+                    var completed = await Task.WhenAny(timeout, remainingDepdencies);
                     if (completed == remainingDepdencies) // all dependencies received
                     {
                         cts.Cancel();
@@ -65,13 +65,13 @@ namespace Azure.DurableFunctions.EventAggregator
                         // Timed out 
                         //signal to end await context.RaiseEventAsync(orchestration.InstanceId, @"Event-Aggregator-Orchestrator", eventGridEvent);
                         await context.CallActivityAsync(@"Publish-Event-Status", $"Ready to process {receivedEvent.Subject} : dependencies remaining {completed.Result.Count}");
-                    }                  
-                                      
+                    }
+
                 }
                 else
                 {
                     await context.CallActivityAsync(@"Publish-Event-Status", $"Ready to process {receivedEvent.Subject}");
-                }                    
+                }
             }
         }
 
@@ -92,7 +92,7 @@ namespace Azure.DurableFunctions.EventAggregator
                 {
                     if (dependency.Subject.Equals("Exit"))
                         return dependencies;
-                    
+
                     dependencies.Remove(dependency.EventType);
                 }
             }
