@@ -26,14 +26,14 @@ namespace Azure.DurableFunctions.EventAggregator.DurableFunction
         public EventAggregatorOrchestrator(ILogger<EventAggregatorOrchestrator> logger) => Logger = logger;
 
         [FunctionName("Event-Subscriber")]
-        public async Task ReceiveEventAsync([EventGridTrigger] EventGridEvent eventGridEvent, [DurableClient] IDurableClient client)
+        public async Task ReceiveEventsAsync([EventGridTrigger] EventGridEvent eventGridEvent, [DurableClient] IDurableClient client)
         {
             Logger.LogInformation($"Received Event: {eventGridEvent.Data.ToString()}");
             await ReceiveOrUpdateEventsAsync(eventGridEvent, client);
         }
 
         [FunctionName("Dependencies-Subscriber")]
-        public async Task DependenciesSubscriber([EventGridTrigger] EventGridEvent eventGridEvent, [DurableClient] IDurableClient client)
+        public async Task ReceiveDependenciesAsync([EventGridTrigger] EventGridEvent eventGridEvent, [DurableClient] IDurableClient client)
         {
             Logger.LogInformation($"Received Dependency: {eventGridEvent.Data.ToString()}");
             await ReceiveOrUpdateEventsAsync(eventGridEvent, client);
@@ -46,11 +46,11 @@ namespace Azure.DurableFunctions.EventAggregator.DurableFunction
             var receivedEvent = context.GetInput<EventGridEvent>();
 
             // Check if any dependencies     
-            if (dependencies.TryGetValue(receivedEvent.Data.ToString(), out List<string> dependenciesList))
+            if (dependencies.TryGetValue(receivedEvent.Subject.ToString(), out List<string> dependenciesList))
             {
                 if (dependenciesList.Any())
                 {
-                    var endTime = context.CurrentUtcDateTime.Add(TimeSpan.FromSeconds(120));// Durable Timer 
+                    var endTime = context.CurrentUtcDateTime.Add(TimeSpan.FromSeconds(60));// Durable Timer 
                     using var cts = new CancellationTokenSource();
                     var timeout = context.CreateTimer<List<string>>(endTime, default, cts.Token);
                     var remainingDepdencies = DependenciesReceivedAsync(context, dependenciesList, cts);
@@ -58,24 +58,24 @@ namespace Azure.DurableFunctions.EventAggregator.DurableFunction
                     if (completed == remainingDepdencies) // all dependencies received
                     {
                         cts.Cancel();
-                        await context.CallActivityAsync(@"Publish-Event-Status", $"Ready to process {receivedEvent.Subject} : dependencies remaining {completed.Result.Count}");
+                        await context.CallActivityAsync(@"Event-Status-Publisher", $"Ready to process {receivedEvent.Subject} : dependencies remaining {completed.Result.Count}");
                     }
                     else
                     {
                         // Timed out 
                         //signal to end await context.RaiseEventAsync(orchestration.InstanceId, @"Event-Aggregator-Orchestrator", eventGridEvent);
-                        await context.CallActivityAsync(@"Publish-Event-Status", $"Ready to process {receivedEvent.Subject} : dependencies remaining {completed.Result.Count}");
+                        await context.CallActivityAsync(@"Event-Status-Publisher", $"Ready to process {receivedEvent.Subject} : Timed out");
                     }
 
                 }
                 else
                 {
-                    await context.CallActivityAsync(@"Publish-Event-Status", $"Ready to process {receivedEvent.Subject}");
+                    await context.CallActivityAsync(@"Event-Status-Publisher", $"Ready to process {receivedEvent.Subject}");
                 }
             }
         }
 
-        [FunctionName("Publish-Event-Status")]
+        [FunctionName("Event-Status-Publisher")]
         public async Task PublishStatusAsync([ActivityTrigger] string status)
         {
             Logger.LogInformation($"Publishing Status for Event: {status}");
@@ -110,12 +110,25 @@ namespace Azure.DurableFunctions.EventAggregator.DurableFunction
             }
             else
             {
-                if (orchestration.RuntimeStatus == OrchestrationRuntimeStatus.Terminated)
-                    Logger.LogError($"Cannot start new instance. {orchestration.Output} since already terminated.");
-                else
-                    await client.RaiseEventAsync(orchestration.InstanceId, @"Event-Aggregator-Orchestrator", eventGridEvent);
-            }
+                //_ = orchestration.RuntimeStatus switch
+                //{
+                //    OrchestrationRuntimeStatus.Terminated => Logger.LogError($"Cannot start new instance. {orchestration.Output} since already terminated."),
+                //    OrchestrationRuntimeStatus.Completed => 
+                //    _ => 
+                //};
 
+                if (orchestration.RuntimeStatus == OrchestrationRuntimeStatus.Terminated || orchestration.RuntimeStatus == OrchestrationRuntimeStatus.Completed || orchestration.RuntimeStatus == OrchestrationRuntimeStatus.Failed)
+                {
+                    var instance = await client.StartNewAsync(@"Event-Aggregator-Orchestrator", eventGridEvent.Subject, eventGridEvent);
+                    Logger.LogInformation($"Started new Orchestration instance {instance} for {orchestration}");
+                }
+                else if (orchestration.RuntimeStatus == OrchestrationRuntimeStatus.Running)
+                    await client.RaiseEventAsync(orchestration.InstanceId, @"Event-Aggregator-Orchestrator", eventGridEvent);
+                else
+                {
+                    Logger.LogError($"Cannot start new instance. {orchestration.Output} since already terminated.");
+                }
+            }
         }
     }
 }
