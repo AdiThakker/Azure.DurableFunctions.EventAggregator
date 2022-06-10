@@ -75,6 +75,7 @@ namespace Azure.DurableFunctions.EventAggregator.DurableFunction
                                     {
                                         // All dependencies received
                                         status = "All dependencies received!";
+                                        cts.Cancel();
                                         break;
                                     }
                                 }
@@ -89,10 +90,10 @@ namespace Azure.DurableFunctions.EventAggregator.DurableFunction
                     }
                     else
                     {
-                        status = "No dependencies, moving on!";
+                        status = "No dependencies, so moving on!";
                     }
                 }
-                
+                //
                 await context.CallActivityAsync(@"Event-Status-Publisher", status);
             }
             catch (TaskCanceledException ex)
@@ -110,7 +111,7 @@ namespace Azure.DurableFunctions.EventAggregator.DurableFunction
         [FunctionName("Event-Status-Publisher")]
         public void PublishStatus([ActivityTrigger] string status)
         {
-            // Logger.LogInformation(status);
+            Logger.LogInformation(status);
         }
 
         private async Task ReceiveOrUpdateEventsAsync(EventGridEvent eventGridEvent, IDurableClient client)
