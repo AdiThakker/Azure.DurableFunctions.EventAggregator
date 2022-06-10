@@ -11,7 +11,7 @@ namespace Azure.DurableFunctions.EventAggregator.DurableFunction
 {
     public class EventAggregatorOrchestrator
     {
-        private static ConcurrentDictionary<string, List<string>> dependencies;
+        private static readonly ConcurrentDictionary<string, List<string>> dependencies;
 
         static EventAggregatorOrchestrator()
         {
@@ -112,7 +112,6 @@ namespace Azure.DurableFunctions.EventAggregator.DurableFunction
         {
             // Logger.LogInformation(status);
         }
-
 
         private async Task ReceiveOrUpdateEventsAsync(EventGridEvent eventGridEvent, IDurableClient client)
         {
