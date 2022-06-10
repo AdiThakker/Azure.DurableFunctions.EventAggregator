@@ -133,7 +133,8 @@ namespace Azure.DurableFunctions.EventAggregator.DurableFunction
 
             async Task RaiseEventForOrchestration()
             {
-                await client.RaiseEventAsync(orchestration.InstanceId, @"Event-Aggregator-Orchestrator", eventGridEvent);                
+                await client.RaiseEventAsync(orchestration.InstanceId, @"Event-Aggregator-Orchestrator", eventGridEvent);
+                Logger.LogInformation($"Received dependency event for {orchestration}");
             }
 
             async Task StartOrchestration()
